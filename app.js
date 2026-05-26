@@ -61,17 +61,47 @@ document.addEventListener('DOMContentLoaded', () => {
             const r = await fetch(phpProxy, { signal: getSignal(timeout) });
             if (r.ok) return isJson ? await r.json() : await r.text();
             
-            console.warn(`PHP proxy returned HTTP ${r.status}, trying AllOrigins fallback...`);
+            console.warn(`PHP proxy returned HTTP ${r.status}, trying external fallbacks...`);
         } catch (e) { 
-            console.warn('PHP proxy failed:', e.message, 'trying AllOrigins...'); 
+            console.warn('PHP proxy failed:', e.message, 'trying external fallbacks...'); 
         }
 
-        // Strategy 2: AllOrigins (External fallback)
-        if (!absoluteUrl.startsWith('http')) {
+        // --- Client-side translation for static hosts (like GitHub Pages) ---
+        // Rewrite relative MVG transit API calls to real MVG endpoints so they can be fetched via CORS proxies
+        let targetUrl = absoluteUrl;
+        if (targetUrl.includes('/departures') && !targetUrl.includes('mvg.de')) {
+            let station = 'de:09178:3239';
+            const m = targetUrl.match(/station=([^&]+)/);
+            if (m) station = m[1];
+            targetUrl = `https://www.mvg.de/api/bgw-pt/v3/departures?globalId=${station}&limit=30&offsetInMinutes=0&transportTypes=BAHN,SBAHN,UBAHN,TRAM,BUS,REGIONAL_BUS,SCHIFF`;
+        } else if (targetUrl.includes('/nearby') && !targetUrl.includes('mvg.de')) {
+            const m = targetUrl.match(/latitude=([^&]+)&longitude=([^&]+)/);
+            if (m) {
+                targetUrl = `https://www.mvg.de/api/bgw-pt/v3/locations/nearby?latitude=${m[1]}&longitude=${m[2]}`;
+            }
+        } else if (targetUrl.includes('/trips') && !targetUrl.includes('mvg.de')) {
+            const m = targetUrl.match(/origin=([^&]+)&dest=([^&]+)/);
+            if (m) {
+                targetUrl = `https://www.mvg.de/api/bgw-pt/v3/trips?originId=${m[1]}&destId=${m[2]}`;
+            }
+        }
+
+        if (!targetUrl.startsWith('http')) {
             throw new Error('Relative URL fetch failed on file:// protocol. Please run on a server.');
         }
 
-        const ao = `https://api.allorigins.win/raw?url=${encodeURIComponent(absoluteUrl)}`;
+        // Strategy 2: corsproxy.io (Very fast public CORS proxy)
+        try {
+            const cp = `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`;
+            const r = await fetch(cp, { signal: getSignal(timeout) });
+            if (r.ok) return isJson ? await r.json() : await r.text();
+            console.warn(`corsproxy.io failed (HTTP ${r.status}), trying AllOrigins...`);
+        } catch (e) {
+            console.warn('corsproxy.io failed:', e.message, 'trying AllOrigins...');
+        }
+
+        // Strategy 3: AllOrigins (Secondary external fallback)
+        const ao = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
         try {
             const r = await fetch(ao, { signal: getSignal(timeout + 5000) });
             if (!r.ok) throw new Error(`Proxy failed (HTTP ${r.status})`);
