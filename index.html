@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TUM Work-Uni Balancer</title>
+    <link rel="stylesheet" href="style.css?v=1.3">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ical.js/1.5.0/ical.min.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>TUM Availability</h1>
+            <p class="subtitle">Balance your uni schedule with work effortlessly.</p>
+        </header>
+
+        <section class="card" id="setup-card">
+            <div class="input-group">
+                <label for="ical-url">TUM iCal URL</label>
+                <input type="url" id="ical-url" value="" placeholder="https://campus.tum.de/..." autocomplete="off">
+                <div class="instructions">
+                    Log in to TUMonline → Personal Calendar → "Publish" → Copy the iCal link and paste it here.
+                </div>
+            </div>
+
+            <div class="input-group" style="margin-top: 16px;">
+                <label style="display:flex; align-items:center; justify-content:space-between;">
+                    <span>Private Calendars <span
+                            style="font-size:0.75rem;color:var(--text-secondary);font-weight:400;">(Google, Apple,
+                            work…)</span></span>
+                    <button type="button" id="add-cal-btn" class="btn secondary"
+                        style="padding:4px 10px;font-size:0.78rem;">+ Add Calendar</button>
+                </label>
+                <div id="private-cal-list" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"></div>
+                <div class="instructions">
+                    Google: Calendar Settings → "Secret address in iCal format" &nbsp;|&nbsp; Apple: Share calendar →
+                    copy link
+                </div>
+            </div>
+
+            <div class="input-grid">
+                <div class="input-group">
+                    <label>Work Days</label>
+                    <div class="days-selector">
+                        <label class="day-check"><input type="checkbox" value="1" checked> <span>M</span></label>
+                        <label class="day-check"><input type="checkbox" value="2" checked> <span>T</span></label>
+                        <label class="day-check"><input type="checkbox" value="3" checked> <span>W</span></label>
+                        <label class="day-check"><input type="checkbox" value="4" checked> <span>T</span></label>
+                        <label class="day-check"><input type="checkbox" value="5" checked> <span>F</span></label>
+                        <label class="day-check"><input type="checkbox" value="6"> <span>S</span></label>
+                        <label class="day-check highlight"><input type="checkbox" value="0"> <span>S</span></label>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label>Work Hours</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="time" id="work-start" value="09:00">
+                        <span style="align-self: center;">to</span>
+                        <input type="time" id="work-end" value="18:00">
+                    </div>
+                    <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+                        <label for="min-slot" style="font-size: 0.8rem; color: var(--text-secondary); margin: 0;">Min
+                            slot:</label>
+                        <input type="number" id="min-slot" value="4" min="0.5" max="12" step="0.5" style="width: 70px;">
+                        <span style="font-size: 0.8rem; color: var(--text-secondary);">hours</span>
+                    </div>
+                    <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+                        <label for="commute-buffer"
+                            style="font-size: 0.8rem; color: var(--text-secondary); margin: 0;">Buffer:</label>
+                        <input type="number" id="commute-buffer" value="2" min="0" max="4" step="0.5"
+                            style="width: 70px;">
+                        <span style="font-size: 0.8rem; color: var(--text-secondary);">hours</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-group" style="margin-top: 10px;">
+                <label>View Preferences</label>
+                <div class="preferences-grid">
+                    <label class="toggle-container">
+                        <input type="checkbox" id="show-lectures-cal" checked>
+                        <span class="toggle-label">Show Lectures in Calendar</span>
+                    </label>
+                    <label class="toggle-container">
+                        <input type="checkbox" id="bonus-hours" checked>
+                        <span class="toggle-label">Include Bonus Times (Sun/Holidays)</span>
+                    </label>
+                    <label class="toggle-container">
+                        <input type="checkbox" id="show-transport" checked>
+                        <span class="toggle-label">Show Transport Connections</span>
+                    </label>
+                    <label class="toggle-container">
+                        <input type="checkbox" id="show-bonus-badge" checked>
+                        <span class="toggle-label">Highlight Bonus Slots</span>
+                    </label>
+                </div>
+                <div id="transport-row" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <label style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">Commute: Campus → Work</label>
+                        <button type="button" id="use-location-btn" class="btn secondary small" style="padding: 2px 8px; font-size: 0.7rem;">📍 Home Station Near Me</button>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="transport-base" class="custom-select" style="flex: 1; padding: 4px 8px; font-size: 0.85rem;">
+                            <option value="de:09184:4124">Ottobrunn Campus</option>
+                            <option value="de:09162:6">Garching (Forschungszentrum)</option>
+                            <option value="de:09178:3100">Freising (Home)</option>
+                        </select>
+                        <span style="font-size: 0.8rem; color: #999;">to</span>
+                        <select id="transport-destination" class="custom-select" style="flex: 1; padding: 4px 8px; font-size: 0.85rem;">
+                            <option value="de:09178:3239">Airport (Work)</option>
+                            <option value="de:09178:3100">Freising (Home)</option>
+                        </select>
+                    </div>
+                    <div id="location-status" style="font-size: 0.7rem; color: #28a745; display: none;"></div>
+                </div>
+            </div>
+
+            <div class="input-grid" style="margin-top: 20px;">
+                <div class="input-group">
+                    <label for="view-range">Calculation Range</label>
+                    <select id="view-range" class="custom-select">
+                        <option value="93" selected>Full Term (Current Semester)</option>
+                        <option value="month:0">April</option>
+                        <option value="month:1">May</option>
+                        <option value="month:2">June</option>
+                        <option value="month:3">July</option>
+                        <option value="month:4">August</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="custom-holidays">Extra Holidays (Bonus Days)</label>
+                    <input type="text" id="custom-holidays" placeholder="YYYY-MM-DD, YYYY-MM-DD">
+                </div>
+            </div>
+
+            <button id="fetch-lectures-btn" class="btn" style="margin-top: 24px; width: 100%;">
+                <span>Fetch Calendar & Configure</span>
+                <div class="loading-spinner" id="loader"></div>
+            </button>
+        </section>
+
+        <section class="card results" id="lecture-selection-section" style="display: none;">
+            <h2 style="font-size: 1.2rem; margin-bottom: 12px;">Uncheck Optional Lectures</h2>
+            <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 20px;">
+                Uncheck courses that don't have mandatory attendance to mark that time as available for work.
+            </p>
+            <div class="lecture-bulk-actions">
+                <button type="button" class="btn secondary small" id="select-all-lectures">Select All</button>
+                <button type="button" class="btn secondary small" id="unselect-all-lectures">Unselect All</button>
+                <button type="button" class="btn secondary small" id="smart-uncheck-lectures"
+                    title="Uncheck Lectures (VO), keep Exercises (UE) and Labs">Smart Uncheck</button>
+            </div>
+            <div id="lecture-list" class="lecture-filter-list">
+                <!-- Lectures will be listed here -->
+            </div>
+            <button id="calculate-availability-btn" class="btn" style="margin-top: 20px;">
+                Generate Availability
+            </button>
+        </section>
+
+        <section class="card results" id="results-section" style="display: none;">
+            <div class="results-summary">
+                <div id="total-hours-container"></div>
+                <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                    <div id="month-tabs" class="month-tabs">
+                        <!-- Month buttons will be injected here -->
+                    </div>
+                    <button id="whatsapp-btn" class="btn whatsapp">📱 Copy (WhatsApp)</button>
+                    <button id="copy-btn" class="btn secondary">📋 Full Summary</button>
+                    <button id="ics-btn" class="btn secondary">📅 Export .ics</button>
+                    <button id="reset-btn" class="btn secondary">⚙️ Settings</button>
+                </div>
+            </div>
+
+            <div class="selection-bar" style="display: none;">
+                <label class="selection-toggle">
+                    <input type="checkbox" id="select-all-slots">
+                    <span>Select all slots</span>
+                </label>
+                <span id="selection-summary" class="selection-summary">0 selected · 0h</span>
+                <span class="selection-hint">Tip: untick slots you don't want to share</span>
+            </div>
+
+            <div id="availability-container" class="calendar-view"></div>
+        </section>
+    </div>
+
+    <!-- Force reload of app.js to fix encoding and icons -->
+    <script src="app.js?v=1.3"></script>
+</body>
+
+</html>
