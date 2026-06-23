@@ -80,9 +80,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 const r = await fetch(phpProxy, { signal: getSignal(timeout) });
                 if (r.ok) {
                     const text = await r.text();
-                    if (text.trim().startsWith('<?php') || text.includes('<?php')) {
+                    const trimmed = text.trim().replace(/^\uFEFF/, '');
+                    if (trimmed.startsWith('<?') || trimmed.includes('<?php') || trimmed.includes('<?PHP')) {
                         phpProxySupported = false;
                         throw new Error('PHP proxy is not executed by the server (raw source returned)');
+                    }
+                    if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.includes('</html>')) {
+                        throw new Error('PHP proxy returned HTML instead of raw data (possibly a 404 page or redirect)');
                     }
                     phpProxySupported = true;
                     return isJson ? JSON.parse(text) : text;
@@ -98,7 +102,14 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const cp = `https://corsproxy.io/?url=${encodeURIComponent(absoluteUrl)}`;
             const r = await fetch(cp, { signal: getSignal(timeout) });
-            if (r.ok) return isJson ? await r.json() : await r.text();
+            if (r.ok) {
+                const text = await r.text();
+                const trimmed = text.trim().replace(/^\uFEFF/, '');
+                if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.includes('</html>')) {
+                    throw new Error('CORS proxy returned HTML page instead of raw data (possibly blocked or error)');
+                }
+                return isJson ? JSON.parse(text) : text;
+            }
             console.warn(`corsproxy.io failed (HTTP ${r.status}), trying AllOrigins...`);
         } catch (e) {
             console.warn('corsproxy.io failed:', e.message, 'trying AllOrigins...');
@@ -113,7 +124,12 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const r = await fetch(ao, { signal: getSignal(timeout + 5000) });
             if (!r.ok) throw new Error(`Proxy failed (HTTP ${r.status})`);
-            return isJson ? await r.json() : await r.text();
+            const text = await r.text();
+            const trimmed = text.trim().replace(/^\uFEFF/, '');
+            if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.includes('</html>')) {
+                throw new Error('CORS proxy returned HTML page instead of raw data (possibly blocked or error)');
+            }
+            return isJson ? JSON.parse(text) : text;
         } catch (e) {
             if (e.name === 'TimeoutError' || e.name === 'AbortError') {
                 throw new Error(`Request timed out after ${timeout + 5000}ms. The server might be slow.`);
@@ -163,9 +179,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const response = await fetch('proxy.php?action=load_settings');
                 if (response.ok) {
                     const text = await response.text();
-                    if (text.trim().startsWith('<?php') || text.includes('<?php')) {
+                    const trimmed = text.trim().replace(/^\uFEFF/, '');
+                    if (trimmed.startsWith('<?') || trimmed.includes('<?php') || trimmed.includes('<?PHP')) {
                         phpProxySupported = false;
                         throw new Error('PHP proxy is not executed by the server (raw source returned)');
+                    }
+                    if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.includes('</html>')) {
+                        phpProxySupported = false;
+                        throw new Error('PHP proxy returned HTML instead of settings (possibly a 404 page or redirect)');
                     }
                     phpProxySupported = true;
                     const serverData = JSON.parse(text);
@@ -173,8 +194,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         saved = serverData;
                         console.log("Loaded settings from server");
                     }
+                } else {
+                    phpProxySupported = false;
                 }
             } catch (e) {
+                phpProxySupported = false;
                 console.warn('Server settings load failed, falling back to local', e);
             }
 
