@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let privateEvents = [];
     let lastAvailabilitySlots = []; // For ICS export
     let config = {};
+    let phpProxySupported = null; // null = untested, true = supported, false = unsupported
 
     const STORAGE_KEY = 'tum_balancer_settings_v1';
     const TUM_API_BASE = 'https://campus.tum.de/tumonline/';
@@ -37,14 +38,31 @@ document.addEventListener('DOMContentLoaded', () => {
             ? AbortSignal.timeout(ms) 
             : null;
 
+        // Rewrite relative MVG API routes to absolute URLs
+        let targetUrl = url;
+        if (url.startsWith('/departures')) {
+            const station = new URLSearchParams(url.split('?')[1] || '').get('station') || 'de:09178:3239';
+            targetUrl = `https://www.mvg.de/api/bgw-pt/v3/departures?globalId=${station}&limit=30&offsetInMinutes=0&transportTypes=BAHN,SBAHN,UBAHN,TRAM,BUS,REGIONAL_BUS,SCHIFF`;
+        } else if (url.startsWith('/nearby')) {
+            const params = new URLSearchParams(url.split('?')[1] || '');
+            const lat = params.get('latitude') || '';
+            const lng = params.get('longitude') || '';
+            targetUrl = `https://www.mvg.de/api/bgw-pt/v3/locations/nearby?latitude=${lat}&longitude=${lng}`;
+        } else if (url.startsWith('/trips')) {
+            const params = new URLSearchParams(url.split('?')[1] || '');
+            const origin = params.get('origin') || '';
+            const dest = params.get('dest') || '';
+            targetUrl = `https://www.mvg.de/api/bgw-pt/v3/trips?originId=${origin}&destId=${dest}`;
+        }
+
         // Ensure we have an absolute URL for cross-origin strategies
-        const isAbsolute = url.startsWith('http');
-        const absoluteUrl = isAbsolute ? url : (window.location.origin === 'null' || !window.location.origin ? '' : window.location.origin) + url;
+        const isAbsolute = targetUrl.startsWith('http');
+        const absoluteUrl = isAbsolute ? targetUrl : (window.location.origin === 'null' || !window.location.origin ? '' : window.location.origin) + targetUrl;
 
         // Strategy 0: Direct Fetch (Try this first for absolute URLs, as TUM supports CORS)
         if (isAbsolute) {
             try {
-                const r = await fetch(url, { signal: getSignal(timeout) });
+                const r = await fetch(targetUrl, { signal: getSignal(timeout) });
                 if (r.ok) return isJson ? await r.json() : await r.text();
             } catch (e) {
                 console.warn('Direct fetch failed (likely CORS or network), trying proxies...', e.message);
@@ -52,47 +70,33 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Strategy 1: PHP Proxy (primary for hosted site / relative URLs)
-        try {
-            // Convert back to relative if it was a local absolute URL to avoid proxying our own site
-            const cleanUrl = absoluteUrl.replace(window.location.origin, '');
-            const bustUrl = cleanUrl.includes('?') ? `${cleanUrl}&_t=${Date.now()}` : `${cleanUrl}?_t=${Date.now()}`;
-            const phpProxy = `proxy.php?url=${encodeURIComponent(bustUrl)}`;
-            
-            const r = await fetch(phpProxy, { signal: getSignal(timeout) });
-            if (r.ok) return isJson ? await r.json() : await r.text();
-            
-            console.warn(`PHP proxy returned HTTP ${r.status}, trying external fallbacks...`);
-        } catch (e) { 
-            console.warn('PHP proxy failed:', e.message, 'trying external fallbacks...'); 
-        }
-
-        // --- Client-side translation for static hosts (like GitHub Pages) ---
-        // Rewrite relative MVG transit API calls to real MVG endpoints so they can be fetched via CORS proxies
-        let targetUrl = absoluteUrl;
-        if (targetUrl.includes('/departures') && !targetUrl.includes('mvg.de')) {
-            let station = 'de:09178:3239';
-            const m = targetUrl.match(/station=([^&]+)/);
-            if (m) station = m[1];
-            targetUrl = `https://www.mvg.de/api/bgw-pt/v3/departures?globalId=${station}&limit=30&offsetInMinutes=0&transportTypes=BAHN,SBAHN,UBAHN,TRAM,BUS,REGIONAL_BUS,SCHIFF`;
-        } else if (targetUrl.includes('/nearby') && !targetUrl.includes('mvg.de')) {
-            const m = targetUrl.match(/latitude=([^&]+)&longitude=([^&]+)/);
-            if (m) {
-                targetUrl = `https://www.mvg.de/api/bgw-pt/v3/locations/nearby?latitude=${m[1]}&longitude=${m[2]}`;
+        if (phpProxySupported !== false) {
+            try {
+                // Convert back to relative if it was a local absolute URL to avoid proxying our own site
+                const cleanUrl = absoluteUrl.replace(window.location.origin, '');
+                const bustUrl = cleanUrl.includes('?') ? `${cleanUrl}&_t=${Date.now()}` : `${cleanUrl}?_t=${Date.now()}`;
+                const phpProxy = `proxy.php?url=${encodeURIComponent(bustUrl)}`;
+                
+                const r = await fetch(phpProxy, { signal: getSignal(timeout) });
+                if (r.ok) {
+                    const text = await r.text();
+                    if (text.trim().startsWith('<?php') || text.includes('<?php')) {
+                        phpProxySupported = false;
+                        throw new Error('PHP proxy is not executed by the server (raw source returned)');
+                    }
+                    phpProxySupported = true;
+                    return isJson ? JSON.parse(text) : text;
+                }
+                
+                console.warn(`PHP proxy returned HTTP ${r.status}, trying AllOrigins fallback...`);
+            } catch (e) { 
+                console.warn('PHP proxy failed:', e.message, 'trying AllOrigins...'); 
             }
-        } else if (targetUrl.includes('/trips') && !targetUrl.includes('mvg.de')) {
-            const m = targetUrl.match(/origin=([^&]+)&dest=([^&]+)/);
-            if (m) {
-                targetUrl = `https://www.mvg.de/api/bgw-pt/v3/trips?originId=${m[1]}&destId=${m[2]}`;
-            }
-        }
-
-        if (!targetUrl.startsWith('http')) {
-            throw new Error('Relative URL fetch failed on file:// protocol. Please run on a server.');
         }
 
         // Strategy 2: corsproxy.io (Very fast public CORS proxy)
         try {
-            const cp = `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`;
+            const cp = `https://corsproxy.io/?url=${encodeURIComponent(absoluteUrl)}`;
             const r = await fetch(cp, { signal: getSignal(timeout) });
             if (r.ok) return isJson ? await r.json() : await r.text();
             console.warn(`corsproxy.io failed (HTTP ${r.status}), trying AllOrigins...`);
@@ -101,7 +105,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Strategy 3: AllOrigins (Secondary external fallback)
-        const ao = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+        if (!absoluteUrl.startsWith('http')) {
+            throw new Error('Relative URL fetch failed on file:// protocol. Please run on a server.');
+        }
+
+        const ao = `https://api.allorigins.win/raw?url=${encodeURIComponent(absoluteUrl)}`;
         try {
             const r = await fetch(ao, { signal: getSignal(timeout + 5000) });
             if (!r.ok) throw new Error(`Proxy failed (HTTP ${r.status})`);
@@ -154,7 +162,13 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const response = await fetch('proxy.php?action=load_settings');
                 if (response.ok) {
-                    const serverData = await response.json();
+                    const text = await response.text();
+                    if (text.trim().startsWith('<?php') || text.includes('<?php')) {
+                        phpProxySupported = false;
+                        throw new Error('PHP proxy is not executed by the server (raw source returned)');
+                    }
+                    phpProxySupported = true;
+                    const serverData = JSON.parse(text);
                     if (serverData && serverData.icalUrl) {
                         saved = serverData;
                         console.log("Loaded settings from server");
@@ -308,14 +322,16 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 
             // 2. Save to server
-            try {
-                await fetch('proxy.php?action=save_settings', {
-                    method: 'POST',
-                    body: JSON.stringify(data),
-                    headers: { 'Content-Type': 'application/json' }
-                });
-            } catch (e) {
-                console.warn('Failed to save settings to server', e);
+            if (phpProxySupported !== false) {
+                try {
+                    await fetch('proxy.php?action=save_settings', {
+                        method: 'POST',
+                        body: JSON.stringify(data),
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                } catch (e) {
+                    console.warn('Failed to save settings to server', e);
+                }
             }
         } catch (e) { console.warn('Failed to save settings', e); }
     }
